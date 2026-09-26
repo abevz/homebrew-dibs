@@ -33,8 +33,6 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           set -euo pipefail
-          brew tap abevz/dibs
-          cp Formula/dibs.rb "$(brew --repository abevz/dibs)/Formula/dibs.rb"
           brew install abevz/dibs/dibs
           brew test abevz/dibs/dibs
           test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibs"

@@ -24,3 +24,19 @@ dibs installation exists, use `command -v dibs` to see which binary your shell
 will run. Stop a running `dibsd` before upgrading or uninstalling, then start
 it again after an upgrade; use its service manager if it is manager-owned.
 See the [service instructions](https://github.com/abevz/dibs/blob/main/docs/operations.md#explicit-service-switch).
+
+## Maintenance
+
+The [sync workflow](.github/workflows/sync-formula.yml) keeps the formula in
+step with dibs releases. Every day, and when started by hand from the Actions
+tab, it compares `Formula/dibs.rb` with the `dibs.rb` asset of the newest dibs
+release, prereleases included. When they differ, it checks that the asset pins
+every archive in the release checksums, pushes a `formula/<tag>` branch, runs
+the install tests on it, and opens a pull request. Merge that pull request
+after the four install checks pass.
+
+GitHub disables scheduled workflows in a public repository after 60 days
+without repository activity. After a long pause between releases, the daily
+run may stop. Start **Sync formula from dibs releases** by hand after a
+release, or re-enable the workflow in the Actions tab; merging the next
+formula pull request counts as activity again.

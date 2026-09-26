@@ -1,0 +1,106 @@
+name: Sync formula from dibs releases
+
+# Keeps Formula/dibs.rb equal to the dibs.rb asset of the newest dibs release
+# (prereleases included). When it differs, push a branch, run the tap tests on
+# it, and open a pull request for the owner to merge. If this repository does
+# not allow Actions to create pull requests, open an issue with the link.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "dibs release tag to sync (default: newest release)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: sync-formula
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync formula
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_INPUT: ${{ inputs.tag }}
+          SOURCE_REPO: abevz/dibs
+        run: |
+          set -euo pipefail
+          tag=${TAG_INPUT:-}
+          if [ -z "$tag" ]; then
+            tag=$(gh release list -R "$SOURCE_REPO" --exclude-drafts --limit 1 \
+              --json tagName --jq '.[0].tagName')
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::unexpected release tag: $tag"
+            exit 1
+          fi
+
+          rel="$RUNNER_TEMP/release"
+          mkdir -p "$rel"
+          gh release download "$tag" -R "$SOURCE_REPO" -p dibs.rb -p checksums.txt -D "$rel"
+
+          # Every archive in the release checksum manifest must be pinned by
+          # the formula, and the formula must name the release version.
+          while read -r hash file; do
+            if ! grep -q "$hash" "$rel/dibs.rb"; then
+              echo "::error::dibs.rb does not pin $file from $tag"
+              exit 1
+            fi
+          done <"$rel/checksums.txt"
+          grep -q "version \"${tag#v}\"" "$rel/dibs.rb" || {
+            echo "::error::dibs.rb does not declare version ${tag#v}"
+            exit 1
+          }
+          ruby -c "$rel/dibs.rb" >/dev/null
+
+          if cmp -s "$rel/dibs.rb" Formula/dibs.rb; then
+            echo "Formula already matches $tag."
+            exit 0
+          fi
+
+          branch="formula/$tag"
+          if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null; then
+            echo "Branch $branch already exists; its pull request is pending."
+            exit 0
+          fi
+
+          cp "$rel/dibs.rb" Formula/dibs.rb
+          # Backticks are literal README markup, not command substitution.
+          # shellcheck disable=SC2016
+          sed -E -i 's/`v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?`/`'"$tag"'`/g' README.md
+          sum=$(sha256sum Formula/dibs.rb | cut -d' ' -f1)
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add Formula/dibs.rb README.md
+          git commit -m "feat: update dibs formula to $tag" \
+            -m "Formula/dibs.rb is byte-for-byte the dibs.rb asset from the $tag release (SHA-256 $sum); every archive hash in its checksums.txt is pinned."
+          git push origin "$branch"
+
+          # Pull requests opened with GITHUB_TOKEN do not trigger pull_request
+          # workflows, so dispatch the required tap tests on the branch.
+          gh workflow run test.yml --ref "$branch"
+
+          title="Update dibs formula to $tag"
+          body="Formula/dibs.rb is byte-for-byte the dibs.rb asset from [$tag](https://github.com/$SOURCE_REPO/releases/tag/$tag) (SHA-256 \`$sum\`). Every archive hash in the release checksums.txt is pinned. The tap tests were dispatched on this branch; merge after they pass."
+          if gh pr create --base main --head "$branch" --title "$title" --body "$body"; then
+            exit 0
+          fi
+          compare="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+          echo "::warning::Actions may not create pull requests here; opening an issue instead."
+          gh issue create --title "$title" \
+            --body "$body Open the pull request: $compare"

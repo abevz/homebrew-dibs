@@ -1,28 +1,28 @@
 class Dibs < Formula
   desc "Local execution ledger for AI agents"
   homepage "https://github.com/abevz/dibs"
-  version "0.1.0-rc.3"
+  version "0.1.0-rc.4"
   license "Apache-2.0"
 
   on_arm do
     on_macos do
-      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.3/dibs_darwin_arm64.tar.gz"
-      sha256 "376df549e63e5d9578ab811e3e1e806e4f214fa072aa29a265db1f424f81e224"
+      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.4/dibs_darwin_arm64.tar.gz"
+      sha256 "f13cad0ca206edba19795315e011e8cc0f6effb99126911c3e15632532177e39"
     end
     on_linux do
-      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.3/dibs_linux_arm64.tar.gz"
-      sha256 "39d17a5342cde9a56ec835fbde3a9a6c58d1fb6ef25f30590bdb57391ee75b36"
+      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.4/dibs_linux_arm64.tar.gz"
+      sha256 "8ca7bc6558db25db67c2192713aec020e35a2145470edb25fa474c3b2b8e5088"
     end
   end
 
   on_intel do
     on_macos do
-      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.3/dibs_darwin_amd64.tar.gz"
-      sha256 "b4387fd35e1ee92dac7ff9f2f67cb0abe72ebb8758ce55cf0d87403442105e56"
+      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.4/dibs_darwin_amd64.tar.gz"
+      sha256 "379639f3d47f430ffc192353c28bbfff00f32d510c7c7334705975fd839ee01a"
     end
     on_linux do
-      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.3/dibs_linux_amd64.tar.gz"
-      sha256 "bf6110f94092cc9ff3b0e790e44e9e2e53765112bd33a63a16c3b73abe252de0"
+      url "https://github.com/abevz/dibs/releases/download/v0.1.0-rc.4/dibs_linux_amd64.tar.gz"
+      sha256 "43c4b3f261562e4c4a623450a55ce01f4fdeeda6cb823fc4731a9720a6148ff6"
     end
   end
 

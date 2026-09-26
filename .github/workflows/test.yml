@@ -1,0 +1,45 @@
+name: Test Homebrew tap
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-15-intel
+          - macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Homebrew/actions/setup-homebrew@1e34f2e2acaa766b7efacb8c26352e6abbb023f9 # 2026.09.13.1
+        with:
+          core: false
+          cask: false
+      - name: Install the checked-out formula through the tap
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+          brew tap abevz/dibs
+          cp Formula/dibs.rb "$(brew --repository abevz/dibs)/Formula/dibs.rb"
+          brew install abevz/dibs/dibs
+          brew test abevz/dibs/dibs
+          test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibs"
+          test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibsd"
+          test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibs-mcp"
+          test -s "$(brew --prefix abevz/dibs/dibs)/share/dibs/LICENSE"
+          "$(brew --prefix abevz/dibs/dibs)/bin/dibs" version
+          brew list --versions abevz/dibs/dibs

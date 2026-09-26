@@ -39,5 +39,12 @@ jobs:
           test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibsd"
           test -x "$(brew --prefix abevz/dibs/dibs)/bin/dibs-mcp"
           test -s "$(brew --prefix abevz/dibs/dibs)/share/dibs/LICENSE"
-          "$(brew --prefix abevz/dibs/dibs)/bin/dibs" version
           brew list --versions abevz/dibs/dibs
+          # The installed binary must report the formula's release version.
+          formula_version=$(brew list --versions abevz/dibs/dibs | awk '{print $2}')
+          reported=$("$(brew --prefix abevz/dibs/dibs)/bin/dibs" version)
+          echo "$reported"
+          case "$reported" in
+            "dibs v${formula_version} ("*) ;;
+            *) echo "expected dibs v${formula_version}, got: $reported" >&2; exit 1 ;;
+          esac

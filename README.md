@@ -1,6 +1,6 @@
 # Homebrew tap for dibs
 
-This tap packages the published `v0.2.0` release of
+This tap packages the published `v0.3.0` release of
 [dibs](https://github.com/abevz/dibs). The formula uses the release archives
 and SHA-256 checksums published with that tag.
 

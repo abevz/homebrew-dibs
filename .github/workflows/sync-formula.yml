@@ -1,9 +1,8 @@
 name: Sync formula from dibs releases
 
 # Keeps Formula/dibs.rb equal to the dibs.rb asset of the newest dibs release
-# (prereleases included). When it differs, push a branch, run the tap tests on
-# it, and open a pull request for the owner to merge. If this repository does
-# not allow Actions to create pull requests, open an issue with the link.
+# (prereleases included). When it differs, push a branch and open a pull
+# request for the owner to merge. The pull_request event runs the tap tests.
 
 on:
   schedule:
@@ -15,10 +14,7 @@ on:
         required: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  actions: write
+  contents: read
 
 concurrency:
   group: sync-formula
@@ -27,10 +23,42 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-24.04
+    env:
+      TAP_PR_AUTH: ${{ vars.TAP_PR_AUTH || 'pat' }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Validate tap publishing credentials
+        shell: bash
+        env:
+          PAT_CONFIGURED: ${{ secrets.TAP_PR_TOKEN != '' }}
+          APP_KEY_CONFIGURED: ${{ secrets.TAP_APP_PRIVATE_KEY != '' }}
+          APP_CLIENT_ID: ${{ vars.TAP_APP_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          case "$TAP_PR_AUTH" in
+            pat)
+              if [[ "$PAT_CONFIGURED" != true ]]; then
+                echo "::error::Set the TAP_PR_TOKEN repository Actions secret to a fine-grained PAT with Contents and Pull requests read/write on this tap."
+                exit 1
+              fi
+              ;;
+            app)
+              if [[ "$APP_KEY_CONFIGURED" != true || -z "$APP_CLIENT_ID" ]]; then
+                echo "::error::GitHub App mode needs the TAP_APP_CLIENT_ID repository variable and TAP_APP_PRIVATE_KEY repository Actions secret."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Set TAP_PR_AUTH to pat or app, or leave it unset for pat."
+              exit 1
+              ;;
+          esac
 
-      - name: Sync formula
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare formula update
+        id: prepare
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,11 +100,6 @@ jobs:
           fi
 
           branch="formula/$tag"
-          if git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null; then
-            echo "Branch $branch already exists; its pull request is pending."
-            exit 0
-          fi
-
           cp "$rel/dibs.rb" Formula/dibs.rb
           # Backticks are literal README markup, not command substitution.
           # shellcheck disable=SC2016
@@ -89,18 +112,76 @@ jobs:
           git add Formula/dibs.rb README.md
           git commit -m "feat: update dibs formula to $tag" \
             -m "Formula/dibs.rb is byte-for-byte the dibs.rb asset from the $tag release (SHA-256 $sum); every archive hash in its checksums.txt is pinned."
-          git push origin "$branch"
+          printf 'tag=%s\nbranch=%s\nsha256=%s\n' "$tag" "$branch" "$sum" >> "$GITHUB_OUTPUT"
 
-          # Pull requests opened with GITHUB_TOKEN do not trigger pull_request
-          # workflows, so dispatch the required tap tests on the branch.
-          gh workflow run test.yml --ref "$branch"
+      - name: Mint tap GitHub App installation token
+        id: app-token
+        if: env.TAP_PR_AUTH == 'app' && steps.prepare.outputs.branch != ''
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
 
-          title="Update dibs formula to $tag"
-          body="Formula/dibs.rb is byte-for-byte the dibs.rb asset from [$tag](https://github.com/$SOURCE_REPO/releases/tag/$tag) (SHA-256 \`$sum\`). Every archive hash in the release checksums.txt is pinned. The tap tests were dispatched on this branch; merge after they pass."
-          if gh pr create --base main --head "$branch" --title "$title" --body "$body"; then
+      - name: Push formula branch and open pull request
+        if: steps.prepare.outputs.branch != ''
+        shell: bash
+        env:
+          TAP_PAT: ${{ env.TAP_PR_AUTH == 'pat' && secrets.TAP_PR_TOKEN || '' }}
+          TAP_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          FORMULA_SHA256: ${{ steps.prepare.outputs.sha256 }}
+          SOURCE_REPO: abevz/dibs
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          case "$TAP_PR_AUTH" in
+            pat) export GH_TOKEN="$TAP_PAT" ;;
+            app) export GH_TOKEN="$TAP_APP_TOKEN" ;;
+            *) echo "::error::Invalid TAP_PR_AUTH publishing mode."; exit 1 ;;
+          esac
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Tap publishing credential is unavailable. Check the selected PAT or GitHub App setup."
+            exit 1
+          fi
+
+          pulls="repos/$GITHUB_REPOSITORY/pulls"
+          existing_pr=$(gh api --method GET "$pulls" -f state=all -f base=main \
+            -f head="$GITHUB_REPOSITORY_OWNER:$BRANCH" --jq '.[0].html_url // empty')
+          if [[ -n "$existing_pr" ]]; then
+            echo "Formula PR already exists: $existing_pr"
             exit 0
           fi
-          compare="https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
-          echo "::warning::Actions may not create pull requests here; opening an issue instead."
-          gh issue create --title "$title" \
-            --body "$body Open the pull request: $compare"
+
+          # Supply Git credentials through gh, using the same GH_TOKEN as the PR API.
+          git_with_tap_auth() {
+            git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
+          tap_url="https://github.com/$GITHUB_REPOSITORY.git"
+          if git_with_tap_auth ls-remote --exit-code "$tap_url" "refs/heads/$BRANCH" >/dev/null; then
+            # A prior attempt may have pushed before PR creation failed.
+            git_with_tap_auth fetch --no-tags "$tap_url" "refs/heads/$BRANCH"
+            if ! git diff --quiet HEAD FETCH_HEAD; then
+              echo "::error::Formula branch $BRANCH already exists with different contents. Review it before retrying."
+              exit 1
+            fi
+          else
+            status=$?
+            if [[ "$status" != 2 ]]; then
+              echo "::error::Could not check whether formula branch $BRANCH exists."
+              exit "$status"
+            fi
+            git_with_tap_auth push "$tap_url" "HEAD:refs/heads/$BRANCH"
+          fi
+
+          title="Update dibs formula to $TAG"
+          body="Formula/dibs.rb is byte-for-byte the dibs.rb asset from [$TAG](https://github.com/$SOURCE_REPO/releases/tag/$TAG) (SHA-256 \`$FORMULA_SHA256\`). Every archive hash in the release checksums.txt is pinned. Merge after the pull request's four install checks pass."
+          if ! gh api --method POST "$pulls" -f base=main -f head="$BRANCH" \
+            -f title="$title" -f body="$body" --jq .html_url; then
+            echo "::error::Could not open a formula PR. Verify Pull requests write access, then rerun sync to reuse the branch."
+            exit 1
+          fi
